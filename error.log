@@ -1,0 +1,11 @@
+
+Traceback (most recent call last):
+  File "C:\Users\A M TECH\Desktop\py playground\Unical_p2p_system\p2p_sys\lib\site-packages\pyp2p\sock.py", line 195, in connect
+    self.s.connect((addr, int(port)))
+TimeoutError: timed out
+ <class 'TimeoutError'> sock.py 195 timed out
+Traceback (most recent call last):
+  File "C:\Users\A M TECH\Desktop\py playground\Unical_p2p_system\p2p_sys\lib\site-packages\pyp2p\sock.py", line 195, in connect
+    self.s.connect((addr, int(port)))
+TimeoutError: timed out
+ <class 'TimeoutError'> sock.py 195 timed out
