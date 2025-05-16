@@ -20,10 +20,8 @@ class P2PNode:
         self.is_running = False
 
     async def listen(self, port):
-        """Custom listen method to initialize protocol and create UDP transport."""
         try:
             loop = asyncio.get_event_loop()
-            # Initialize Kademlia protocol with node, storage, and ksize
             self.server.protocol = KademliaProtocol(self.server.node, self.server.storage, ksize=20)
             transport, protocol = await loop.create_datagram_endpoint(
                 lambda: self.server.protocol,
@@ -38,7 +36,6 @@ class P2PNode:
             raise
 
     async def start(self):
-        """Start the Kademlia node asynchronously."""
         try:
             await self.listen(self.port)
             if self.bootstrap_nodes:
@@ -53,7 +50,6 @@ class P2PNode:
             raise
 
     async def stop(self):
-        """Stop the Kademlia node asynchronously."""
         if self.is_running:
             self.server.stop()
             if hasattr(self.server, 'transport') and self.server.transport:
@@ -62,86 +58,74 @@ class P2PNode:
             logging.info(f"Kademlia node stopped for {self.username}")
 
     async def share_file(self, filename, file_data, category):
-        """Share a file by storing it locally and metadata in the Kademlia DHT."""
         try:
-            # Encrypt the file
             encrypted_data, aes_key = encrypt_file(file_data)
             file_hash = compute_file_hash(file_data)
 
-            # Save encrypted file locally
             os.makedirs('Uploads', exist_ok=True)
             upload_path = os.path.join('Uploads', filename)
             with open(upload_path, 'wb') as f:
                 f.write(encrypted_data)
             logging.debug(f"Saved encrypted file {filename} to {upload_path}")
 
-            # Prepare metadata (encode aes_key to base64 for JSON compatibility)
             metadata = {
                 'filename': filename,
                 'category': category,
-                'aes_key': base64.b64encode(aes_key).decode('utf-8') if isinstance(aes_key, bytes) else aes_key,
+                'aes_key': base64.b64encode(aes_key).decode('utf-8'),
                 'location': upload_path
             }
-            # Serialize metadata to JSON bytes
             metadata_bytes = json.dumps(metadata).encode('utf-8')
             await self.server.set(file_hash, metadata_bytes)
             logging.debug(f"Stored metadata for {filename} in DHT with hash {file_hash}, metadata: {metadata}")
 
-            # Update files dictionary (do not reset)
             self.files[filename] = (encrypted_data, category, aes_key, file_hash)
             logging.info(f"File {filename} shared by {self.username} in category {category} with hash {file_hash}")
             return file_hash
         except Exception as e:
-            logging.error(f"Failed to share file {filename}: {str(e)}")
+            logging.error(f"Failed to share file {filename}: {str(e)}", exc_info=True)
             raise
 
-    async def request_file(self, target_address, filename, private_key):
-        """Request a file using its hash, retrieving metadata from DHT and file from local storage."""
+    async def request_file(self, target_address, filename, private_key, file_hash):
         try:
-            file_info = self.files.get(filename)
-            file_hash = file_info[3] if file_info else None
             if not file_hash:
-                logging.warning(f"File {filename} not in local files for {self.username}, attempting DHT lookup")
-                return None, None, None  # Need file_hash from database
+                logging.error(f"No file_hash provided for {filename}")
+                return None, None, None
 
-            # Retrieve metadata from DHT
+            file_info = self.files.get(filename)
+            if file_info and file_info[3] == file_hash:
+                logging.debug(f"Found {filename} in local files for {self.username}")
+                return file_info[0], file_info[2], file_info[3]
+
             metadata_bytes = await self.server.get(file_hash)
-            if metadata_bytes:
-                # Deserialize metadata
+            if not metadata_bytes:
+                logging.error(f"No metadata found in DHT for file_hash {file_hash}")
+                return None, None, None
+
+            try:
+                metadata = json.loads(metadata_bytes.decode('utf-8'))
+                aes_key = base64.b64decode(metadata['aes_key'])
+            except (json.JSONDecodeError, ValueError) as e:
+                logging.error(f"Failed to deserialize metadata for {filename}: {str(e)}")
+                return None, None, None
+
+            if 'location' in metadata:
                 try:
-                    metadata = json.loads(metadata_bytes.decode('utf-8'))
-                    # Decode aes_key from base64
-                    aes_key = base64.b64decode(metadata['aes_key']) if 'aes_key' in metadata else None
-                except (json.JSONDecodeError, ValueError) as e:
-                    logging.error(f"Failed to deserialize metadata for {filename}: {str(e)}")
-                    return None, None, None
+                    with open(metadata['location'], 'rb') as f:
+                        encrypted_data = f.read()
+                    logging.debug(f"Retrieved {filename} from {metadata['location']} with hash {file_hash}")
+                    return encrypted_data, aes_key, file_hash
+                except FileNotFoundError:
+                    logging.error(f"File {filename} not found at {metadata['location']}")
 
-                # Load file from local storage
-                if 'location' in metadata:
-                    try:
-                        with open(metadata['location'], 'rb') as f:
-                            encrypted_data = f.read()
-                        logging.debug(f"Retrieved {filename} from {metadata['location']} with hash {file_hash}")
-                        return encrypted_data, aes_key, file_hash
-                    except FileNotFoundError:
-                        logging.error(f"File {filename} not found at {metadata['location']}")
-                else:
-                    logging.warning(f"No location in metadata for {filename}")
-
-            # Fallback to local Uploads directory
             upload_path = os.path.join('Uploads', filename)
             try:
                 with open(upload_path, 'rb') as f:
                     encrypted_data = f.read()
-                aes_key = file_info[2] if file_info else None
-                if not aes_key:
-                    logging.error(f"No AES key for {filename}")
-                    return None, None, None
                 logging.debug(f"Retrieved {filename} from Uploads directory with hash {file_hash}")
                 return encrypted_data, aes_key, file_hash
             except FileNotFoundError:
                 logging.error(f"File {filename} not found in Uploads")
                 return None, None, None
         except Exception as e:
-            logging.error(f"Failed to request file {filename}: {str(e)}")
+            logging.error(f"Failed to request file {filename}: {str(e)}", exc_info=True)
             return None, None, None

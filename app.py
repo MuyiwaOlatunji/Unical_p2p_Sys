@@ -6,8 +6,8 @@ import os
 import re
 import secrets
 import io
+import mimetypes
 from quart import Quart, request, render_template, redirect, url_for, flash, send_file, session, jsonify
-# from quart.exceptions import RequestEntityTooLarge
 from p2p_network import P2PNode
 from database import init_db, register_user, verify_user, store_resource, get_resources, get_resource_key, store_message, get_messages, get_all_users, log_usage, get_user_address, get_user_port, get_user_private_key
 from security import hash_password, generate_key_pair, decrypt_file
@@ -25,16 +25,13 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %
 
 init_db()
 
-# Initialize bootstrap node
 bootstrap_node = P2PNode("bootstrap", 8468)
 
 def is_valid_email(email):
-    """Validate email address using regex."""
     pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
     return re.match(pattern, email) is not None
 
 def is_port_available(port):
-    """Check if a port is available."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         try:
             s.bind(('0.0.0.0', port))
@@ -43,7 +40,6 @@ def is_port_available(port):
             return False
 
 def find_available_port(start_port=9000, end_port=9999, exclude_ports=None):
-    """Find an available port in the given range, excluding specified ports."""
     exclude_ports = exclude_ports or set()
     for port in range(start_port, end_port + 1):
         if port in exclude_ports:
@@ -63,7 +59,6 @@ def login_required(f):
 
 @app.before_serving
 async def startup():
-    """Start bootstrap node before the application starts serving."""
     try:
         await bootstrap_node.start()
         logging.info("Bootstrap node started on 127.0.0.1:8468")
@@ -73,7 +68,6 @@ async def startup():
 
 @app.after_serving
 async def shutdown():
-    """Stop bootstrap node after the application stops serving."""
     try:
         await bootstrap_node.stop()
         logging.info("Bootstrap node stopped")
@@ -187,7 +181,6 @@ async def login():
                 address = await node.start()
                 logging.debug(f"Node started at {address}")
                 nodes[email] = node
-                # Load private key from database
                 private_key_pem = get_user_private_key(email)
                 if private_key_pem:
                     private_key = serialization.load_pem_private_key(
@@ -198,7 +191,6 @@ async def login():
                     private_keys[email] = private_key
                 else:
                     logging.warning(f"No private key found in database for {email}")
-                    # Optionally regenerate key pair (not recommended)
                 session['username'] = email
                 log_usage(email, 'login')
                 await flash(f'Welcome, {email}!')
@@ -261,7 +253,7 @@ async def upload():
         return redirect(url_for('dashboard', username=username))
     filename = secure_filename(file.filename)
     try:
-        file_data = file.read()  # Synchronous read
+        file_data = file.read()
         if not file_data:
             await flash('File is empty.')
             return redirect(url_for('dashboard', username=username))
@@ -269,15 +261,12 @@ async def upload():
         store_resource(filename, category, file_hash, username, node.files[filename][2], None)
         await flash('File uploaded successfully.')
     except Exception as e:
+        logging.error(f"Upload failed for {filename}: {str(e)}")
         if "413" in str(e) or "Request Entity Too Large" in str(e):
-            logging.error(f"Upload failed for {filename}: File exceeds 16MB limit")
             await flash('File too large. Maximum size is 16MB.')
         else:
-            logging.error(f"Upload failed for {filename}: {str(e)}")
             await flash(f"Error uploading file: {str(e)}")
-    except Exception as e:
-        logging.error(f"Upload failed for {filename}: {str(e)}")
-        await flash(f"Error uploading file: {str(e)}")
+        return redirect(url_for('dashboard', username=username))
     return redirect(url_for('dashboard', username=username))
 
 @app.route('/download/<filename>', methods=['GET'])
@@ -292,7 +281,6 @@ async def download(filename):
         await flash('User node not found.')
         return redirect(url_for('dashboard', username=username))
     
-    # Get file_hash from resources table
     file_hash = None
     for resource in get_resources():
         if resource[0] == filename:
@@ -303,37 +291,43 @@ async def download(filename):
         await flash('File hash not found.')
         return redirect(url_for('dashboard', username=username))
     
-    # Request file from node
     private_key = private_keys.get(username)
     if not private_key:
         logging.error(f"No private key for {username}")
         await flash('Private key not found.')
         return redirect(url_for('dashboard', username=username))
     
-    encrypted_data, aes_key, retrieved_hash = await node.request_file(None, filename, private_key, file_hash=file_hash)
-    if not encrypted_data or not aes_key:
-        logging.error(f"Failed to retrieve {filename} from node")
-        await flash('File not found or inaccessible.')
-        return redirect(url_for('dashboard', username=username))
-    
-    # Verify file integrity
-    if retrieved_hash != file_hash:
-        logging.error(f"Hash mismatch for {filename}: expected {file_hash}, got {retrieved_hash}")
-        await flash('File integrity check failed.')
-        return redirect(url_for('dashboard', username=username))
-    
     try:
+        encrypted_data, aes_key, retrieved_hash = await node.request_file(None, filename, private_key, file_hash=file_hash)
+        if not encrypted_data or not aes_key or not retrieved_hash:
+            logging.error(f"Failed to retrieve {filename} from node")
+            await flash('File not found or inaccessible.')
+            return redirect(url_for('dashboard', username=username))
+        
+        if retrieved_hash != file_hash:
+            logging.error(f"Hash mismatch for {filename}: expected {file_hash}, got {retrieved_hash}")
+            await flash('File integrity check failed.')
+            return redirect(url_for('dashboard', username=username))
+        
         decrypted_data = decrypt_file(encrypted_data, aes_key)
         logging.debug(f"Successfully decrypted {filename}")
-        return await send_file(
+        
+        mime_type, _ = mimetypes.guess_type(filename)
+        if not mime_type:
+            mime_type = 'application/octet-stream'
+        
+        # Add Content-Disposition header to force download
+        response = await send_file(
             io.BytesIO(decrypted_data),
             download_name=filename,
             as_attachment=True,
-            mimetype='application/octet-stream'
+            mimetype=mime_type
         )
+        response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
     except Exception as e:
-        logging.error(f"Error decrypting file {filename}: {str(e)}")
-        await flash(f'Error decrypting file: {str(e)}')
+        logging.error(f"Error downloading file {filename}: {str(e)}", exc_info=True)
+        await flash(f'Error downloading file: {str(e)}')
         return redirect(url_for('dashboard', username=username))
 
 @app.route('/messages/<username>')

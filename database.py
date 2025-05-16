@@ -28,6 +28,7 @@ def init_db():
                     owner TEXT NOT NULL,
                     aes_key BLOB,
                     public_key TEXT,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (filename, owner),
                     FOREIGN KEY (owner) REFERENCES users(username)
                 )
@@ -125,7 +126,7 @@ def get_resources(category='', search=''):
     try:
         with sqlite3.connect('p2p.db') as conn:
             c = conn.cursor()
-            query = 'SELECT filename, category, file_hash, owner FROM resources WHERE 1=1'
+            query = 'SELECT filename, category, file_hash, owner, timestamp FROM resources WHERE 1=1'
             params = []
             if category:
                 query += ' AND category = ?'

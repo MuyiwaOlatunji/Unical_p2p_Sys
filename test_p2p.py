@@ -24,12 +24,11 @@ async def main():
     file_hash = await node1.share_file(filename, file_data, "Documents")
     
     # Test file retrieval
-    encrypted_data = await node2.server.get(file_hash)
-    key = node1.files[filename][2]  # Get AES key from node1
-    if encrypted_data and key:
-        decrypted_data = decrypt_file(encrypted_data, key)
+    encrypted_data, aes_key, retrieved_hash = await node2.request_file(None, filename, private_key2, file_hash=file_hash)
+    if encrypted_data and aes_key and retrieved_hash:
+        decrypted_data = decrypt_file(encrypted_data, aes_key)
         assert decrypted_data == file_data, "Decrypted data does not match original"
-        assert compute_file_hash(decrypted_data) == node1.files[filename][3], "File hash mismatch"
+        assert compute_file_hash(decrypted_data) == file_hash, "File hash mismatch"
         print("File shared and retrieved successfully")
     else:
         print("File retrieval failed")
@@ -38,12 +37,11 @@ async def main():
     file_data2 = b"Another test file"
     filename2 = "test2.txt"
     file_hash2 = await node1.share_file(filename2, file_data2, "Documents")
-    encrypted_data2 = await node2.server.get(file_hash2)
-    key2 = node1.files[filename2][2]
-    if encrypted_data2 and key2:
-        decrypted_data2 = decrypt_file(encrypted_data2, key2)
+    encrypted_data2, aes_key2, retrieved_hash2 = await node2.request_file(None, filename2, private_key2, file_hash=file_hash2)
+    if encrypted_data2 and aes_key2 and retrieved_hash2:
+        decrypted_data2 = decrypt_file(encrypted_data2, aes_key2)
         assert decrypted_data2 == file_data2, "Second file decryption failed"
-        assert compute_file_hash(decrypted_data2) == node1.files[filename2][3], "Second file hash mismatch"
+        assert compute_file_hash(decrypted_data2) == file_hash2, "Second file hash mismatch"
         print("Second file test passed")
     else:
         print("Second file retrieval failed")

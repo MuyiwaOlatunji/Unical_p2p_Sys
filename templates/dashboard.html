@@ -101,9 +101,9 @@
                                     <td>{{ resource[0] }}</td>
                                     <td>{{ resource[1] }}</td>
                                     <td>{{ resource[3] }}</td>
-                                    <td>{{ resource[4] }}</td>
+                                    <td>{{ resource[4] or 'N/A' }}</td>
                                     <td>
-                                        <a href="{{ url_for('download', filename=resource[0], username=username) }}" class="btn btn-sm btn-success">Download</a>
+                                        <a href="{{ url_for('download', filename=resource[0], username=username) }}" class="btn btn-sm btn-success" download>Download</a>
                                         {% if resource[1] == 'Images' or resource[0].endswith('.pdf') %}
                                             <button class="btn btn-sm btn-info" onclick="previewFile('{{ resource[0] }}', '{{ username }}')">Preview</button>
                                         {% endif %}

@@ -39,9 +39,76 @@ function searchResources(username) {
     window.location.href = url;
 }
 
-// Preview file (placeholder)
+// Preview file
 function previewFile(filename, username) {
-    alert('Preview not fully implemented. Download the file to view.');
+    if (filename.endsWith('.pdf')) {
+        // Use PDF.js for PDF preview
+        const url = `/download/${filename}?username=${encodeURIComponent(username)}`;
+        const modal = document.createElement('div');
+        modal.className = 'modal fade';
+        modal.innerHTML = `
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Preview: ${filename}</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <canvas id="pdf-canvas"></canvas>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        const bsModal = new bootstrap.Modal(modal);
+        bsModal.show();
+
+        // Load PDF.js
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.min.js';
+        script.onload = async () => {
+            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.worker.min.js';
+            try {
+                const response = await fetch(url);
+                const arrayBuffer = await response.arrayBuffer();
+                const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+                const page = await pdf.getPage(1);
+                const canvas = document.getElementById('pdf-canvas');
+                const context = canvas.getContext('2d');
+                const viewport = page.getViewport({ scale: 1.0 });
+                canvas.height = viewport.height;
+                canvas.width = viewport.width;
+                await page.render({ canvasContext: context, viewport: viewport }).promise;
+            } catch (error) {
+                console.error('PDF preview failed:', error);
+                alert('Failed to load PDF preview.');
+            }
+        };
+        document.head.appendChild(script);
+    } else if (filename.match(/\.(jpg|jpeg|png|gif)$/i)) {
+        // Image preview
+        const url = `/download/${filename}?username=${encodeURIComponent(username)}`;
+        const modal = document.createElement('div');
+        modal.className = 'modal fade';
+        modal.innerHTML = `
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Preview: ${filename}</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <img src="${url}" class="img-fluid" alt="${filename}">
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        const bsModal = new bootstrap.Modal(modal);
+        bsModal.show();
+    } else {
+        alert('Preview not supported for this file type.');
+    }
 }
 
 // Check for new messages via AJAX polling
@@ -75,7 +142,7 @@ function checkMessages() {
         } catch (error) {
             console.error('Error fetching messages:', error);
         }
-        setTimeout(pollMessages, 5000); // Poll every 5 seconds
+        setTimeout(pollMessages, 5000);
     }
 
     pollMessages();
