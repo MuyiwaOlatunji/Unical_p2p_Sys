@@ -1,149 +1,153 @@
-// Initialize Bootstrap components
-document.addEventListener('DOMContentLoaded', function () {
-    // Tooltips
-    const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
-    tooltipTriggerList.map(function (tooltipTriggerEl) {
-        return new bootstrap.Tooltip(tooltipTriggerEl);
-    });
+// Utility function to initialize Bootstrap components
+function initializeBootstrap() {
+    // Initialize tooltips
+    const tooltipTriggers = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+    tooltipTriggers.forEach(trigger => new bootstrap.Tooltip(trigger));
+}
 
-    // Initialize message polling if on messages page
-    if (document.getElementById('messages-list')) {
-        checkMessages();
-    }
-});
+// Navigate to dashboard with filters
+function navigateWithFilters(username, category = '', search = '') {
+    let url = `/dashboard/${encodeURIComponent(username)}`;
+    const params = [];
+    if (category) params.push(`category=${encodeURIComponent(category)}`);
+    if (search) params.push(`search=${encodeURIComponent(search)}`);
+    if (params.length) url += `?${params.join('&')}`;
+    window.location.href = url;
+}
 
 // Filter resources by category
 function filterByCategory(value, username) {
-    const baseUrl = `/dashboard/${username}`;
-    const search = document.getElementById('search') ? document.getElementById('search').value : '';
-    let url = baseUrl;
-    if (value || search) {
-        url += '?';
-        if (value) url += `category=${encodeURIComponent(value)}`;
-        if (search) url += (value ? '&' : '') + `search=${encodeURIComponent(search)}`;
-    }
-    window.location.href = url;
+    const searchInput = document.getElementById('search');
+    const search = searchInput ? searchInput.value : '';
+    navigateWithFilters(username, value, search);
 }
 
 // Search resources
 function searchResources(username) {
-    const search = document.getElementById('search').value;
-    const category = document.getElementById('filter') ? document.getElementById('filter').value : '';
-    const baseUrl = `/dashboard/${username}`;
-    let url = baseUrl;
-    if (category || search) {
-        url += '?';
-        if (category) url += `category=${encodeURIComponent(category)}`;
-        if (search) url += (category ? '&' : '') + `search=${encodeURIComponent(search)}`;
-    }
-    window.location.href = url;
+    const search = document.getElementById('search')?.value || '';
+    const category = document.getElementById('filterCategory')?.value || '';
+    navigateWithFilters(username, category, search);
 }
 
-// Preview file
-function previewFile(filename, username) {
+// Download a file
+function downloadFile(filename, username) {
+    try {
+        const url = `/download/${encodeURIComponent(filename)}?username=${encodeURIComponent(username)}`;
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    } catch (error) {
+        console.error('Download failed:', error);
+        alert('Failed to initiate download.');
+    }
+}
+
+// Preview a file (PDF or image)
+async function previewFile(filename, username) {
+    const url = `/download/${encodeURIComponent(filename)}?username=${encodeURIComponent(username)}`;
+    const modal = document.createElement('div');
+    modal.className = 'modal fade';
+    modal.innerHTML = `
+        <div class="modal-dialog ${filename.endsWith('.pdf') ? 'modal-lg' : ''}">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Preview: ${filename}</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="previewContent">
+                    ${filename.endsWith('.pdf') ? '<canvas id="pdf-canvas"></canvas>' : `<img src="${url}" class="img-fluid" alt="${filename}">`}
+                </div>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    const bsModal = new bootstrap.Modal(modal);
+    bsModal.show();
+
     if (filename.endsWith('.pdf')) {
-        // Use PDF.js for PDF preview
-        const url = `/download/${filename}?username=${encodeURIComponent(username)}`;
-        const modal = document.createElement('div');
-        modal.className = 'modal fade';
-        modal.innerHTML = `
-            <div class="modal-dialog modal-lg">
-                <div class="modal-content">
-                    <div class="modal-header">
-                        <h5 class="modal-title">Preview: ${filename}</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                    </div>
-                    <div class="modal-body">
-                        <canvas id="pdf-canvas"></canvas>
-                    </div>
-                </div>
-            </div>
-        `;
-        document.body.appendChild(modal);
-        const bsModal = new bootstrap.Modal(modal);
-        bsModal.show();
-
-        // Load PDF.js
-        const script = document.createElement('script');
-        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.min.js';
-        script.onload = async () => {
-            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.worker.min.js';
-            try {
-                const response = await fetch(url);
-                const arrayBuffer = await response.arrayBuffer();
-                const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-                const page = await pdf.getPage(1);
-                const canvas = document.getElementById('pdf-canvas');
-                const context = canvas.getContext('2d');
-                const viewport = page.getViewport({ scale: 1.0 });
-                canvas.height = viewport.height;
-                canvas.width = viewport.width;
-                await page.render({ canvasContext: context, viewport: viewport }).promise;
-            } catch (error) {
-                console.error('PDF preview failed:', error);
-                alert('Failed to load PDF preview.');
-            }
-        };
-        document.head.appendChild(script);
-    } else if (filename.match(/\.(jpg|jpeg|png|gif)$/i)) {
-        // Image preview
-        const url = `/download/${filename}?username=${encodeURIComponent(username)}`;
-        const modal = document.createElement('div');
-        modal.className = 'modal fade';
-        modal.innerHTML = `
-            <div class="modal-dialog">
-                <div class="modal-content">
-                    <div class="modal-header">
-                        <h5 class="modal-title">Preview: ${filename}</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                    </div>
-                    <div class="modal-body">
-                        <img src="${url}" class="img-fluid" alt="${filename}">
-                    </div>
-                </div>
-            </div>
-        `;
-        document.body.appendChild(modal);
-        const bsModal = new bootstrap.Modal(modal);
-        bsModal.show();
-    } else {
-        alert('Preview not supported for this file type.');
-    }
-}
-
-// Check for new messages via AJAX polling
-function checkMessages() {
-    const username = document.getElementById('messages-list')?.dataset.username;
-    if (!username) return;
-
-    async function pollMessages() {
         try {
-            const response = await fetch(`/check_messages/${username}`);
-            if (response.status === 403) {
-                console.error('Unauthorized access to messages');
-                return;
-            }
-            const messages = await response.json();
-            const messagesList = document.getElementById('messages-list');
-            messagesList.innerHTML = '';
-            if (messages.length === 0) {
-                messagesList.innerHTML = '<p>No messages yet.</p>';
-            } else {
-                messages.forEach(msg => {
-                    const li = document.createElement('li');
-                    li.className = 'list-group-item';
-                    li.innerHTML = `
-                        <strong>${msg.sender}</strong> to <strong>${msg.recipient}</strong>: ${msg.content}
-                        <small class="text-muted float-end">${new Date(msg.timestamp).toLocaleString()}</small>
-                    `;
-                    messagesList.appendChild(li);
-                });
-            }
+            const script = document.createElement('script');
+            script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.min.js';
+            script.onload = async () => {
+                pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.worker.min.js';
+                try {
+                    const response = await fetch(url, { credentials: 'include' });
+                    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                    const arrayBuffer = await response.arrayBuffer();
+                    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+                    const page = await pdf.getPage(1);
+                    const canvas = document.getElementById('pdf-canvas');
+                    const context = canvas.getContext('2d');
+                    const viewport = page.getViewport({ scale: 1.0 });
+                    canvas.height = viewport.height;
+                    canvas.width = viewport.width;
+                    await page.render({ canvasContext: context, viewport }).promise;
+                } catch (error) {
+                    console.error('PDF preview failed:', error);
+                    alert('Failed to load PDF preview.');
+                    bsModal.hide();
+                }
+            };
+            script.onerror = () => {
+                console.error('Failed to load PDF.js');
+                alert('Failed to load PDF preview library.');
+                bsModal.hide();
+            };
+            document.head.appendChild(script);
         } catch (error) {
-            console.error('Error fetching messages:', error);
+            console.error('PDF preview setup failed:', error);
+            alert('Failed to set up PDF preview.');
+            bsModal.hide();
         }
-        setTimeout(pollMessages, 5000);
+    } else if (!filename.match(/\.(jpg|jpeg|png|gif)$/i)) {
+        console.warn('Unsupported file type for preview:', filename);
+        alert('Preview not supported for this file type.');
+        bsModal.hide();
     }
 
-    pollMessages();
+    // Clean up modal on hide
+    modal.addEventListener('hidden.bs.modal', () => modal.remove());
 }
+
+// Poll for new messages
+async function pollMessages(username) {
+    const messagesList = document.getElementById('messages-list');
+    if (!username || !messagesList) return;
+
+    try {
+        const response = await fetch(`/check_messages/${encodeURIComponent(username)}`, {
+            credentials: 'include'
+        });
+        if (response.status === 403) {
+            console.error('Unauthorized access to messages');
+            messagesList.innerHTML = '<p class="text-danger">Unauthorized access.</p>';
+            return;
+        }
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const messages = await response.json();
+        messagesList.innerHTML = messages.length === 0
+            ? '<p>No messages yet.</p>'
+            : messages.map(msg => `
+                <li class="list-group-item">
+                    <strong>${msg.sender}</strong> to <strong>${msg.recipient}</strong>: ${msg.content}
+                    <small class="text-muted float-end">${new Date(msg.timestamp).toLocaleString()}</small>
+                </li>
+            `).join('');
+    } catch (error) {
+        console.error('Error fetching messages:', error);
+        messagesList.innerHTML = '<p class="text-danger">Failed to load messages.</p>';
+    }
+    setTimeout(() => pollMessages(username), 5000);
+}
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', () => {
+    initializeBootstrap();
+    const messagesList = document.getElementById('messages-list');
+    if (messagesList) {
+        pollMessages(messagesList.dataset.username);
+    }
+});

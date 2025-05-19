@@ -1,243 +1,250 @@
 import sqlite3
 import logging
+import os
+from security import hash_password, verify_password
 
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+def get_db_connection():
+    conn = sqlite3.connect('database.db')
+    conn.row_factory = sqlite3.Row
+    return conn
 
 def init_db():
-    """Initialize the SQLite database and create necessary tables."""
     try:
-        with sqlite3.connect('p2p.db') as conn:
-            c = conn.cursor()
-            c.execute('''
-                CREATE TABLE IF NOT EXISTS users (
-                    username TEXT PRIMARY KEY,
-                    password_hash TEXT NOT NULL,
-                    node_id TEXT NOT NULL,
-                    public_key TEXT NOT NULL,
-                    address TEXT NOT NULL,
-                    peer_id TEXT NOT NULL,
-                    port INTEGER NOT NULL,
-                    private_key TEXT
-                )
-            ''')
-            c.execute('''
-                CREATE TABLE IF NOT EXISTS resources (
-                    filename TEXT NOT NULL,
-                    category TEXT NOT NULL,
-                    file_hash TEXT NOT NULL,
-                    owner TEXT NOT NULL,
-                    aes_key BLOB,
-                    public_key TEXT,
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY (filename, owner),
-                    FOREIGN KEY (owner) REFERENCES users(username)
-                )
-            ''')
-            c.execute('''
-                CREATE TABLE IF NOT EXISTS messages (
-                    sender TEXT NOT NULL,
-                    recipient TEXT NOT NULL,
-                    content TEXT NOT NULL,
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (sender) REFERENCES users(username),
-                    FOREIGN KEY (recipient) REFERENCES users(username)
-                )
-            ''')
-            c.execute('''
-                CREATE TABLE IF NOT EXISTS usage_log (
-                    username TEXT NOT NULL,
-                    action TEXT NOT NULL,
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (username) REFERENCES users(username)
-                )
-            ''')
-            conn.commit()
-            logging.info("Database initialized successfully")
-    except sqlite3.Error as e:
-        logging.error(f"Database initialization failed: {str(e)}")
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                email TEXT PRIMARY KEY,
+                password TEXT NOT NULL,
+                address TEXT NOT NULL,
+                port INTEGER NOT NULL,
+                public_key TEXT NOT NULL,
+                private_key TEXT NOT NULL
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS resources (
+                filename TEXT PRIMARY KEY,
+                category TEXT NOT NULL,
+                file_hash TEXT NOT NULL,
+                owner_email TEXT NOT NULL,
+                FOREIGN KEY (owner_email) REFERENCES users (email)
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sender_email TEXT NOT NULL,
+                recipient_email TEXT NOT NULL,
+                content TEXT NOT NULL,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (sender_email) REFERENCES users (email),
+                FOREIGN KEY (recipient_email) REFERENCES users (email)
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS usage_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT NOT NULL,
+                action TEXT NOT NULL,
+                timestamp DATETIME NOT NULL,
+                FOREIGN KEY (email) REFERENCES users (email)
+            )
+        ''')
+        conn.commit()
+        logging.info("Database initialized successfully")
+    except Exception as e:
+        logging.error(f"Failed to initialize database: {str(e)}")
         raise
+    finally:
+        conn.close()
 
-def register_user(username, password_hash, node_id, public_key, address, peer_id, port, private_key=None):
-    """Register a new user in the database."""
+def register_user(email, password, address, port, public_key, private_key):
     try:
-        with sqlite3.connect('p2p.db') as conn:
-            c = conn.cursor()
-            c.execute('''
-                INSERT INTO users (username, password_hash, node_id, public_key, address, peer_id, port, private_key)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (username, password_hash, node_id, public_key, address, peer_id, port, private_key))
-            conn.commit()
-            logging.debug(f"User {username} registered with port {port}")
-            return True
-    except sqlite3.IntegrityError:
-        logging.warning(f"User {username} already exists")
-        return False
-    except sqlite3.Error as e:
-        logging.error(f"Failed to register user {username}: {str(e)}")
-        return False
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT email FROM users WHERE email = ?', (email,))
+        if cursor.fetchone():
+            conn.close()
+            raise ValueError(f"Email {email} is already registered")
+        logging.debug(f"Registering user {email} with types: email={type(email)}, password={type(password)}, address={type(address)}, port={type(port)}, public_key={type(public_key)}, private_key={type(private_key)}")
+        cursor.execute('''
+            INSERT INTO users (email, password, address, port, public_key, private_key)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (email, password, address, port, public_key, private_key))
+        conn.commit()
+        logging.debug(f"User {email} registered successfully with port {port}")
+    except Exception as e:
+        logging.error(f"Failed to register user {email}: {str(e)}")
+        raise
+    finally:
+        conn.close()
 
-def verify_user(username, password_hash):
-    """Verify user credentials."""
+def verify_user(email, password):
     try:
-        with sqlite3.connect('p2p.db') as conn:
-            c = conn.cursor()
-            c.execute('SELECT password_hash FROM users WHERE username = ?', (username,))
-            result = c.fetchone()
-            if result and result[0] == password_hash:
-                return True
-            logging.debug(f"Verification failed for {username}")
-            return False
-    except sqlite3.Error as e:
-        logging.error(f"Failed to verify user {username}: {str(e)}")
-        return False
-
-def get_user_private_key(username):
-    """Retrieve the private key for a user."""
-    try:
-        with sqlite3.connect('p2p.db') as conn:
-            c = conn.cursor()
-            c.execute('SELECT private_key FROM users WHERE username = ?', (username,))
-            result = c.fetchone()
-            if result and result[0]:
-                return result[0]
-            logging.debug(f"No private key found for {username}")
-            return None
-    except sqlite3.Error as e:
-        logging.error(f"Failed to retrieve private key for {username}: {str(e)}")
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM users WHERE email = ?', (email,))
+        user = cursor.fetchone()
+        conn.close()
+        if user:
+            if verify_password(password, user['password']):
+                logging.debug(f"User {email} verified successfully")
+                return user
+            else:
+                logging.debug(f"Password verification failed for {email}")
+        else:
+            logging.debug(f"User {email} not found")
+        return None
+    except Exception as e:
+        logging.error(f"Failed to verify user {email}: {str(e)}")
         return None
 
-def store_resource(filename, category, file_hash, owner, aes_key, public_key):
-    """Store resource metadata in the database."""
+def store_resource(filename, category, file_hash, owner_email):
     try:
-        with sqlite3.connect('p2p.db') as conn:
-            c = conn.cursor()
-            c.execute('''
-                INSERT OR REPLACE INTO resources (filename, category, file_hash, owner, aes_key, public_key)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (filename, category, file_hash, owner, aes_key, public_key))
-            conn.commit()
-            logging.debug(f"Resource {filename} stored for {owner}")
-    except sqlite3.Error as e:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO resources (filename, category, file_hash, owner_email)
+            VALUES (?, ?, ?, ?)
+        ''', (filename, category, file_hash, owner_email))
+        conn.commit()
+        logging.debug(f"Resource {filename} stored for {owner_email}")
+    except Exception as e:
         logging.error(f"Failed to store resource {filename}: {str(e)}")
         raise
+    finally:
+        conn.close()
 
-def get_resources(category='', search=''):
-    """Retrieve resources from the database, optionally filtered by category or search term."""
+def get_resources():
     try:
-        with sqlite3.connect('p2p.db') as conn:
-            c = conn.cursor()
-            query = 'SELECT filename, category, file_hash, owner, timestamp FROM resources WHERE 1=1'
-            params = []
-            if category:
-                query += ' AND category = ?'
-                params.append(category)
-            if search:
-                query += ' AND filename LIKE ?'
-                params.append(f'%{search}%')
-            c.execute(query, params)
-            return c.fetchall()
-    except sqlite3.Error as e:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT filename, category, file_hash, owner_email FROM resources')
+        resources = cursor.fetchall()
+        conn.close()
+        return resources
+    except Exception as e:
         logging.error(f"Failed to retrieve resources: {str(e)}")
         return []
 
-def get_resource_key(file_hash):
-    """Retrieve the AES key for a resource by its file hash."""
+def get_resource_key(filename):
     try:
-        with sqlite3.connect('p2p.db') as conn:
-            c = conn.cursor()
-            c.execute('SELECT aes_key FROM resources WHERE file_hash = ?', (file_hash,))
-            result = c.fetchone()
-            if result:
-                return result[0]
-            logging.debug(f"No AES key found for file_hash {file_hash}")
-            return None
-    except sqlite3.Error as e:
-        logging.error(f"Failed to retrieve AES key for file_hash {file_hash}: {str(e)}")
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT file_hash FROM resources WHERE filename = ?', (filename,))
+        resource = cursor.fetchone()
+        conn.close()
+        return resource['file_hash'] if resource else None
+    except Exception as e:
+        logging.error(f"Failed to retrieve resource key for {filename}: {str(e)}")
         return None
 
-def store_message(sender, recipient, content):
-    """Store a message in the database."""
+def store_message(sender_email, recipient_email, content):
     try:
-        with sqlite3.connect('p2p.db') as conn:
-            c = conn.cursor()
-            c.execute('''
-                INSERT INTO messages (sender, recipient, content)
-                VALUES (?, ?, ?)
-            ''', (sender, recipient, content))
-            conn.commit()
-            logging.debug(f"Message from {sender} to {recipient} stored")
-    except sqlite3.Error as e:
-        logging.error(f"Failed to store message from {sender} to {recipient}: {str(e)}")
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO messages (sender_email, recipient_email, content)
+            VALUES (?, ?, ?)
+        ''', (sender_email, recipient_email, content))
+        conn.commit()
+        logging.debug(f"Message from {sender_email} to {recipient_email} stored")
+    except Exception as e:
+        logging.error(f"Failed to store message from {sender_email} to {recipient_email}: {str(e)}")
         raise
+    finally:
+        conn.close()
 
-def get_messages(username):
-    """Retrieve messages for a user."""
+def get_messages(recipient_email):
     try:
-        with sqlite3.connect('p2p.db') as conn:
-            c = conn.cursor()
-            c.execute('''
-                SELECT sender, recipient, content, timestamp
-                FROM messages
-                WHERE recipient = ? OR sender = ?
-                ORDER BY timestamp
-            ''', (username, username))
-            return c.fetchall()
-    except sqlite3.Error as e:
-        logging.error(f"Failed to retrieve messages for {username}: {str(e)}")
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT sender_email, content, timestamp
+            FROM messages
+            WHERE recipient_email = ?
+            ORDER BY timestamp DESC
+        ''', (recipient_email,))
+        messages = cursor.fetchall()
+        conn.close()
+        return [{'sender': m['sender_email'], 'content': m['content'], 'timestamp': m['timestamp']} for m in messages]
+    except Exception as e:
+        logging.error(f"Failed to retrieve messages for {recipient_email}: {str(e)}")
         return []
 
 def get_all_users():
-    """Retrieve all registered users."""
     try:
-        with sqlite3.connect('p2p.db') as conn:
-            c = conn.cursor()
-            c.execute('SELECT username FROM users')
-            return [row[0] for row in c.fetchall()]
-    except sqlite3.Error as e:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT email FROM users')
+        users = cursor.fetchall()
+        conn.close()
+        return [user['email'] for user in users]
+    except Exception as e:
         logging.error(f"Failed to retrieve users: {str(e)}")
         return []
 
-def log_usage(username, action):
-    """Log user actions in the database."""
+def log_usage(email, action, timestamp):
     try:
-        with sqlite3.connect('p2p.db') as conn:
-            c = conn.cursor()
-            c.execute('''
-                INSERT INTO usage_log (username, action)
-                VALUES (?, ?)
-            ''', (username, action))
-            conn.commit()
-            logging.debug(f"Logged action {action} for {username}")
-    except sqlite3.Error as e:
-        logging.error(f"Failed to log action for {username}: {str(e)}")
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO usage_logs (email, action, timestamp)
+            VALUES (?, ?, ?)
+        ''', (email, action, timestamp))
+        conn.commit()
+        logging.debug(f"Logged action {action} for {email}")
+    except Exception as e:
+        logging.error(f"Failed to log usage for {email}: {str(e)}")
         raise
+    finally:
+        conn.close()
 
-def get_user_address(username):
-    """Retrieve the address for a user."""
+def get_user_address(email):
     try:
-        with sqlite3.connect('p2p.db') as conn:
-            c = conn.cursor()
-            c.execute('SELECT address FROM users WHERE username = ?', (username,))
-            result = c.fetchone()
-            if result:
-                return result[0]
-            logging.debug(f"No address found for {username}")
-            return None
-    except sqlite3.Error as e:
-        logging.error(f"Failed to retrieve address for {username}: {str(e)}")
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT address FROM users WHERE email = ?', (email,))
+        user = cursor.fetchone()
+        conn.close()
+        return user['address'] if user else None
+    except Exception as e:
+        logging.error(f"Failed to retrieve address for {email}: {str(e)}")
         return None
 
-def get_user_port(username):
-    """Retrieve the port for a user."""
+def get_user_port(email):
     try:
-        with sqlite3.connect('p2p.db') as conn:
-            c = conn.cursor()
-            c.execute('SELECT port FROM users WHERE username = ?', (username,))
-            result = c.fetchone()
-            if result:
-                return result[0]
-            logging.debug(f"No port found for {username}")
-            return None
-    except sqlite3.Error as e:
-        logging.error(f"Failed to retrieve port for {username}: {str(e)}")
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT port FROM users WHERE email = ?', (email,))
+        user = cursor.fetchone()
+        conn.close()
+        return user['port'] if user else None
+    except Exception as e:
+        logging.error(f"Failed to retrieve port for {email}: {str(e)}")
         return None
+
+def get_user_private_key(email):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT private_key FROM users WHERE email = ?', (email,))
+        user = cursor.fetchone()
+        conn.close()
+        return user['private_key'] if user else None
+    except Exception as e:
+        logging.error(f"Failed to retrieve private key for {email}: {str(e)}")
+        return None
+
+def get_used_ports():
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT port FROM users')
+        ports = cursor.fetchall()
+        conn.close()
+        return [port['port'] for port in ports]
+    except Exception as e:
+        logging.error(f"Failed to retrieve used ports: {str(e)}")
+        return []

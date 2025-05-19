@@ -1,4 +1,5 @@
 aiofiles==24.1.0
+bcrypt==4.3.0
 blinker==1.8.2
 cffi==1.17.1
 click==8.1.7
@@ -18,7 +19,7 @@ MarkupSafe==2.1.5
 priority==2.0.0
 pycparser==2.22
 Quart==0.19.6
-rpcudp==5.0
+rpcudp==5.0.0
 taskgroup==0.0.0a4
 tomli==2.0.1
 typing_extensions==4.12.2
