@@ -1,10 +1,16 @@
 import asyncio
+import os
 from p2p_network import P2PNode
 from security import generate_key_pair, decrypt_file, compute_file_hash
 import logging
 
 async def main():
     logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+    
+    # Create a directory for storing files
+    save_path = "./test_files/"
+    os.makedirs(save_path, exist_ok=True)  # Create directory if it doesn't exist
+    
     private_key1, public_key1 = generate_key_pair()
     private_key2, public_key2 = generate_key_pair()
     
@@ -21,7 +27,7 @@ async def main():
     # Test file sharing
     file_data = b"Test document content"
     filename = "test.pdf"
-    file_hash = await node1.share_file(filename, file_data, "Documents")
+    file_hash = await node1.share_file(filename, file_data, "Documents", save_path)
     
     # Test file retrieval
     encrypted_data, aes_key, retrieved_hash = await node2.request_file(None, filename, private_key2, file_hash=file_hash)
@@ -36,7 +42,7 @@ async def main():
     # Test multiple files
     file_data2 = b"Another test file"
     filename2 = "test2.txt"
-    file_hash2 = await node1.share_file(filename2, file_data2, "Documents")
+    file_hash2 = await node1.share_file(filename2, file_data2, "Documents", save_path)
     encrypted_data2, aes_key2, retrieved_hash2 = await node2.request_file(None, filename2, private_key2, file_hash=file_hash2)
     if encrypted_data2 and aes_key2 and retrieved_hash2:
         decrypted_data2 = decrypt_file(encrypted_data2, aes_key2)

@@ -24,7 +24,7 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %
 app = Quart(__name__)
 app.secret_key = secrets.token_hex(16)
 app.config['EXPLAIN_TEMPLATE_LOADING'] = False
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB
+app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 32MB
 nodes = {}
 private_keys = {}
 mimetypes.init()
@@ -175,20 +175,40 @@ async def login():
             try:
                 address = get_user_address(email)
                 port = get_user_port(email)
-                private_key_pem = get_user_private_key(email)
-                private_key = serialization.load_pem_private_key(
-                    private_key_pem.encode('utf-8'),
-                    password=None,
-                    backend=default_backend()
-                )
-                node = P2PNode(email, port=port, address=address)
-                logging.debug(f"Starting node for {email} on port {port}")
-                await node.start()
-                nodes[email] = node
-                private_keys[email] = private_key
-                logging.debug(f"Node started at {address}:{port}")
-                log_usage(email, 'login', datetime.datetime.now())
-                return redirect(url_for('dashboard', username=email))
+                max_attempts = 5  # Try up to 5 different ports
+                attempt = 0
+                
+                while attempt < max_attempts:
+                    try:
+                        private_key_pem = get_user_private_key(email)
+                        private_key = serialization.load_pem_private_key(
+                            private_key_pem.encode('utf-8'),
+                            password=None,
+                            backend=default_backend()
+                        )
+                        node = P2PNode(email, port=port, address=address)
+                        logging.debug(f"Starting node for {email} on port {port}")
+                        await node.start()
+                        nodes[email] = node
+                        private_keys[email] = private_key
+                        logging.debug(f"Node started at {address}:{port}")
+                        log_usage(email, 'login', datetime.datetime.now())
+                        return redirect(url_for('dashboard', username=email))
+                    except OSError as e:
+                        if e.winerror == 10048:  # Port already in use
+                            logging.warning(f"Port {port} in use, trying new port (attempt {attempt + 1}/{max_attempts})")
+                            port = await find_available_port(start_port=9001, end_port=9999)
+                            attempt += 1
+                        else:
+                            raise
+                    except Exception as e:
+                        logging.error(f"Failed to start node for {email} on port {port}: {str(e)}", exc_info=True)
+                        await flash(f'Failed to start node: {str(e)}')
+                        return await render_template('login.html')
+                
+                logging.error(f"Failed to find available port after {max_attempts} attempts for {email}")
+                await flash(f"Could not find an available port after {max_attempts} attempts.")
+                return await render_template('login.html')
             except Exception as e:
                 logging.error(f"Failed to start node for {email} on port {port}: {str(e)}", exc_info=True)
                 await flash(f'Failed to start node: {str(e)}')
@@ -232,8 +252,16 @@ async def upload():
         return redirect(url_for('dashboard', username=username))
     
     filename = secure_filename(file.filename)
+    file_data = file.read()  # Read the file data (synchronous)
+    file_size = len(file_data)  # Calculate size after reading
+    logging.debug(f"Upload attempt for {filename}, size: {file_size} bytes")
+    
+    # Check if file size exceeds MAX_CONTENT_LENGTH
+    if file_size > app.config['MAX_CONTENT_LENGTH']:
+        await flash(f'File size ({file_size} bytes) exceeds limit ({app.config["MAX_CONTENT_LENGTH"]} bytes).')
+        return redirect(url_for('dashboard', username=username))
+    
     try:
-        file_data = file.read()
         file_hash = hashlib.sha256(file_data).hexdigest()
         node = nodes.get(username)
         if not node:
@@ -265,6 +293,7 @@ async def messages(username):
         await flash('Unauthorized access.')
         return redirect(url_for('login'))
     messages = get_messages(username)
+    logging.debug(f"Messages retrieved for {username}: {messages}")
     users = get_all_users()
     return await render_template('messages.html', username=username, messages=messages, users=users)
 

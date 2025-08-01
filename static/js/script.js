@@ -112,42 +112,7 @@ async function previewFile(filename, username) {
     modal.addEventListener('hidden.bs.modal', () => modal.remove());
 }
 
-// Poll for new messages
-async function pollMessages(username) {
-    const messagesList = document.getElementById('messages-list');
-    if (!username || !messagesList) return;
-
-    try {
-        const response = await fetch(`/check_messages/${encodeURIComponent(username)}`, {
-            credentials: 'include'
-        });
-        if (response.status === 403) {
-            console.error('Unauthorized access to messages');
-            messagesList.innerHTML = '<p class="text-danger">Unauthorized access.</p>';
-            return;
-        }
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const messages = await response.json();
-        messagesList.innerHTML = messages.length === 0
-            ? '<p>No messages yet.</p>'
-            : messages.map(msg => `
-                <li class="list-group-item">
-                    <strong>${msg.sender}</strong> to <strong>${msg.recipient}</strong>: ${msg.content}
-                    <small class="text-muted float-end">${new Date(msg.timestamp).toLocaleString()}</small>
-                </li>
-            `).join('');
-    } catch (error) {
-        console.error('Error fetching messages:', error);
-        messagesList.innerHTML = '<p class="text-danger">Failed to load messages.</p>';
-    }
-    setTimeout(() => pollMessages(username), 5000);
-}
-
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
     initializeBootstrap();
-    const messagesList = document.getElementById('messages-list');
-    if (messagesList) {
-        pollMessages(messagesList.dataset.username);
-    }
 });
